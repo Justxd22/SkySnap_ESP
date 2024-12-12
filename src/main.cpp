@@ -2,12 +2,35 @@
 #include "DHT.h"
 #include <WiFi.h>
 #include <map>
-#include <ESPAsyncWebServer.h>
+// #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#include <FirebaseClient.h>
+#include <WiFiClientSecure.h>
+
+#include <WiFi.h>
+#include <FirebaseClient.h>
+#include <WiFiClientSecure.h>
 
 
-const String FHOST = "https://skysnap-12d5a-default-rtdb.europe-west1.firebasedatabase.app/";
-const String FAUTH  = "";
+
+DefaultNetwork network;
+
+UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD);
+
+FirebaseApp app;
+
+WiFiClientSecure ssl_client;
+
+using AsyncClient = AsyncClientClass;
+
+AsyncClient aClient(ssl_client, getNetwork(network));
+
+RealtimeDatabase Database;
+
+AsyncResult aResult_no_callback;
+
+void printError(int code, const String &msg);
+
 
 const int LDR = 33;
 const int BUZZ = 19;
@@ -34,7 +57,7 @@ const char* pass = "12312345";
 bool wifiConnected = false;
 
 
-AsyncWebServer server(80);
+// AsyncWebServer server(80);
 DHT dht(THS, DHT11);
 
 
@@ -137,9 +160,9 @@ void LDR_mon() {
   Serial.print("Light Intensity: ");
   Serial.println(ldrValue);
   
-  if (ldrValue < 100) {
-    buzz();
-  }
+//   if (ldrValue < 100) {
+//     buzz();
+//   }
 }
 void FAN_mon() {
   int WinSpeed = analogRead(FAN);
@@ -150,9 +173,63 @@ void FAN_mon() {
 }
 
 
-void handleLiveData(AsyncWebServerRequest *request) {
+// void handleLiveData(AsyncWebServerRequest *request) {
+//     DynamicJsonDocument doc(1024);
+//     doc["dt"] = live.dt;
+//     doc["temp"]["now"] = live.temp.now;
+//     doc["temp"]["min"] = live.temp.min;
+//     doc["temp"]["max"] = live.temp.max;
+//     doc["humidity"] = live.humidity;
+//     doc["speed"] = live.speed;
+//     doc["sun"] = live.sun;
+//     doc["deg"] = live.deg;
+//     doc["code"] = live.code;
+
+//     String response;
+//     serializeJson(doc, response);
+//     request->send(200, "application/json", response);
+// }
+void printResult(AsyncResult &aResult)
+{
+    if (aResult.isEvent())
+    {
+        Firebase.printf("Event task: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.appEvent().message().c_str(), aResult.appEvent().code());
+    }
+
+    if (aResult.isDebug())
+    {
+        Firebase.printf("Debug task: %s, msg: %s\n", aResult.uid().c_str(), aResult.debug().c_str());
+    }
+
+    if (aResult.isError())
+    {
+        Firebase.printf("Error task: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.error().message().c_str(), aResult.error().code());
+    }
+}
+
+void authHandler()
+{
+    unsigned long ms = millis();
+    while (app.isInitialized() && !app.ready() && millis() - ms < 120 * 1000)
+    {
+        JWT.loop(app.getAuth());
+        printResult(aResult_no_callback);
+    }
+}
+
+void initializeFirebase() {
+    Serial.println("Initializing Firebase...");
+    ssl_client.setInsecure();
+    initializeApp(aClient, app, getAuth(user_auth), aResult_no_callback);
+    authHandler();
+    app.getApp<RealtimeDatabase>(Database);
+    Database.url(DATABASE_URL);
+    aClient.setAsyncResult(aResult_no_callback);
+}
+
+void syncLiveData() {
     DynamicJsonDocument doc(1024);
-    doc["dt"] = live.dt;
+    // doc["dt"] = live.dt;
     doc["temp"]["now"] = live.temp.now;
     doc["temp"]["min"] = live.temp.min;
     doc["temp"]["max"] = live.temp.max;
@@ -162,9 +239,14 @@ void handleLiveData(AsyncWebServerRequest *request) {
     doc["deg"] = live.deg;
     doc["code"] = live.code;
 
-    String response;
-    serializeJson(doc, response);
-    request->send(200, "application/json", response);
+    String jsonString;
+    serializeJson(doc, jsonString);
+    Database.set(aClient, "/liveData", object_t(jsonString));
+}
+
+void printError(int code, const String &msg)
+{
+    Firebase.printf("Error, msg: %s, code: %d\n", msg.c_str(), code);
 }
 
 void setup() {
@@ -188,8 +270,11 @@ void setup() {
     Serial.print(".");
   }
 
-  server.on("/live", HTTP_GET, handleLiveData);
-  server.begin();
+  Firebase.printf("Firebase Client v%s\n", FIREBASE_CLIENT_VERSION);
+  Serial.println("Initializing app...");
+  initializeFirebase();
+  // server.on("/live", HTTP_GET, handleLiveData);
+  // server.begin();
   Serial.println("HTTP server started");
 
   dht.begin();
@@ -204,6 +289,9 @@ void loop() {
     DHT_Mon();
     previousDHTMillis = currentMillis;
     live.dt = millis();
+  }
+  if (currentMillis % 1000 == 100) {
+      syncLiveData();
   }
   
   if (currentMillis - previousLDRMillis >= LDR_INTERVAL) {
@@ -227,6 +315,10 @@ void loop() {
     BUZZZ();
 
   }
+
+  authHandler();
+
+  Database.loop();
 
 }
 
