@@ -2,33 +2,23 @@
 #include "DHT.h"
 #include <WiFi.h>
 #include <map>
-// #include <ESPAsyncWebServer.h>
+#include <ESPAsyncWebServer.h>
+#include "env.cpp"
+AsyncWebServer server(80);
+
 #include <ArduinoJson.h>
 #include <FirebaseClient.h>
 #include <WiFiClientSecure.h>
 
-#include <WiFi.h>
-#include <FirebaseClient.h>
-#include <WiFiClientSecure.h>
-
-
 
 DefaultNetwork network;
-
 UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD);
-
 FirebaseApp app;
-
 WiFiClientSecure ssl_client;
-
-using AsyncClient = AsyncClientClass;
-
-AsyncClient aClient(ssl_client, getNetwork(network));
-
+using AsyncClientx = AsyncClientClass;
+AsyncClientx aClient(ssl_client, getNetwork(network));
 RealtimeDatabase Database;
-
 AsyncResult aResult_no_callback;
-
 void printError(int code, const String &msg);
 
 
@@ -57,7 +47,6 @@ const char* pass = "12312345";
 bool wifiConnected = false;
 
 
-// AsyncWebServer server(80);
 DHT dht(THS, DHT11);
 
 
@@ -173,22 +162,23 @@ void FAN_mon() {
 }
 
 
-// void handleLiveData(AsyncWebServerRequest *request) {
-//     DynamicJsonDocument doc(1024);
-//     doc["dt"] = live.dt;
-//     doc["temp"]["now"] = live.temp.now;
-//     doc["temp"]["min"] = live.temp.min;
-//     doc["temp"]["max"] = live.temp.max;
-//     doc["humidity"] = live.humidity;
-//     doc["speed"] = live.speed;
-//     doc["sun"] = live.sun;
-//     doc["deg"] = live.deg;
-//     doc["code"] = live.code;
+void handleLiveData(AsyncWebServerRequest *request) {
+    DynamicJsonDocument doc(1024);
+    doc["dt"] = live.dt;
+    doc["temp"]["now"] = live.temp.now;
+    doc["temp"]["min"] = live.temp.min;
+    doc["temp"]["max"] = live.temp.max;
+    doc["humidity"] = live.humidity;
+    doc["speed"] = live.speed;
+    doc["sun"] = live.sun;
+    doc["deg"] = live.deg;
+    doc["code"] = live.code;
 
-//     String response;
-//     serializeJson(doc, response);
-//     request->send(200, "application/json", response);
-// }
+    String response;
+    serializeJson(doc, response);
+    request->send(200, "application/json", response);
+}
+
 void printResult(AsyncResult &aResult)
 {
     if (aResult.isEvent())
@@ -273,8 +263,8 @@ void setup() {
   Firebase.printf("Firebase Client v%s\n", FIREBASE_CLIENT_VERSION);
   Serial.println("Initializing app...");
   initializeFirebase();
-  // server.on("/live", HTTP_GET, handleLiveData);
-  // server.begin();
+  server.on("/live", HTTP_GET, handleLiveData);
+  server.begin();
   Serial.println("HTTP server started");
 
   dht.begin();
