@@ -9,6 +9,8 @@ AsyncWebServer server(80);
 #include <ArduinoJson.h>
 #include <FirebaseClient.h>
 #include <WiFiClientSecure.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 
 DefaultNetwork network;
@@ -26,7 +28,8 @@ const int LDR = 33;
 const int BUZZ = 19;
 const int THS = 23;
 const int FAN = 34;
-
+const int LCD_SDA = 27;
+const int LCD_SCL = 26;
 
 const int LEDPINS[] = {12,13};
 const int nLEDS = sizeof(LEDPINS) / sizeof(LEDPINS[0]);
@@ -48,7 +51,7 @@ bool wifiConnected = false;
 
 
 DHT dht(THS, DHT11);
-
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // Live data structure
 struct LiveData {
@@ -70,6 +73,8 @@ void connectToWiFi() {
   WiFi.begin(ssid, pass);
   Serial.println();
   Serial.print("Connecting to ");
+  lcd.setCursor(0, 1);
+  lcd.print("Connecting to XD");  
   Serial.println(ssid);
 
   delay(500);
@@ -99,16 +104,21 @@ delay(500);
 }
 
 void BUZZZ() {
+  // short Info Buzz
   digitalWrite(BUZZ, HIGH);
   delay(100);
   digitalWrite(BUZZ, LOW);
 }
 
 void BUZZZZ() {
+  // long Error Buzz
   digitalWrite(BUZZ, HIGH);
   delay(400);
   digitalWrite(BUZZ, LOW);
 }
+
+float previousTemp = 0;
+unsigned long previousTempTime = 0;
 
 void DHT_Mon() {
   float temp = dht.readTemperature();
@@ -120,6 +130,8 @@ void DHT_Mon() {
     if (maxTemp == 0){
         maxTemp = temp;
         minTemp = temp;
+        previousTemp = temp;
+        previousTempTime = millis();
     }
     live.temp.now = temp;
     live.humidity = hum;
@@ -134,6 +146,16 @@ void DHT_Mon() {
     live.temp.min = minTemp;
     live.temp.max = maxTemp;
     
+    // Check for sudden temperature change
+    if (abs(temp - previousTemp) >= 5) {
+      if (millis() - previousTempTime < 5000) {
+        for (int i = 0; i < 5; i++) {
+          buzz();
+        }
+      }
+    }
+    previousTemp = temp;
+    previousTempTime = millis();
     // Serial.print("Temperature: ");
     // Serial.print(temp);
     // Serial.println(" °C");
@@ -146,6 +168,9 @@ void DHT_Mon() {
 void LDR_mon() {
   int ldrValue = analogRead(LDR);
   live.sun = map(ldrValue, 0, 4095, 0, 100);
+  if (ldrValue == 0){
+    return;
+  }
   Serial.print("Light Intensity: ");
   Serial.println(ldrValue);
   
@@ -155,9 +180,23 @@ void LDR_mon() {
 }
 void FAN_mon() {
   int WinSpeed = analogRead(FAN);
-  live.speed = WinSpeed;
+
+if (WinSpeed == 0 || (WinSpeed > 19.0 && WinSpeed < 29.9)) {
+    return;
+}
+// sensorVoltage = adc0 * (3.3 / 4095.0); // Divide the controller working voltage by the analog input resolution;
+// WindSpeed = (((sensorVoltage - 0.4) / 1.6) * 32.4) * 2.237;
+  float voltage = WinSpeed * 5.0 / 1023.0;
+
+  float windSpeed = (voltage) / 0.1;
+
+  if (windSpeed < 0){
+    windSpeed = 0;
+  }
+
+  live.speed = windSpeed;
   Serial.print("Wind Speed: ");
-  Serial.println(WinSpeed);
+  Serial.println(windSpeed);
 
 }
 
@@ -247,9 +286,23 @@ void setup() {
   pinMode(12, OUTPUT);
   pinMode(13, OUTPUT);
   
-  
   Serial.begin(115200);
   Serial.println("Serial initialized. Pin set to HIGH.");
+
+  Wire.begin(LCD_SDA, LCD_SCL); // Initialize I2C with custom pins
+
+
+  // Initialize the LCD
+  lcd.init();
+  lcd.backlight(); // Turn on the LCD backlight
+
+  // Test message
+  lcd.setCursor(0, 0);
+  lcd.print("SKYSNAP 2.0 XD");
+  lcd.setCursor(0, 1);
+  lcd.print("TO THE MOON & BACK");
+
+
   connectToWiFi();
   while (WiFi.status() != WL_CONNECTED) {
     for (int x=0; x< nLEDS; x++){
@@ -272,6 +325,10 @@ void setup() {
   BUZZZ();
 }
 
+unsigned long previousDisplayMillis = 0;
+const unsigned long DISPLAY_INTERVAL = 2000;
+int displayState = 0;
+
 void loop() {
   unsigned long currentMillis = millis();
   
@@ -292,6 +349,8 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Lost connection to WiFi. Reconnecting...");
+    lcd.setCursor(0, 0);
+    lcd.print("SKYSNAP 2.0 XD");
     BUZZZZ();
     connectToWiFi();
     while (WiFi.status() != WL_CONNECTED) {
@@ -310,5 +369,33 @@ void loop() {
 
   Database.loop();
 
+  if (currentMillis - previousDisplayMillis >= DISPLAY_INTERVAL) {
+    previousDisplayMillis = currentMillis;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("SKYSNAP 2.0 XD");
+    lcd.setCursor(0, 1);
+    switch (displayState) {
+      case 0:
+        lcd.print("Temp: ");
+        lcd.print(live.temp.now);
+        lcd.print(" C");
+        break;
+      case 1:
+        lcd.print("Hum: ");
+        lcd.print(live.humidity);
+        lcd.print(" %");
+        break;
+      case 2:
+        lcd.print("Wind: ");
+        lcd.print(live.speed);
+        break;
+      case 3:
+        lcd.print("Sun: ");
+        lcd.print(live.sun);
+        lcd.print(" %");
+        break;
+    }
+    displayState = (displayState + 1) % 4;
+  }
 }
-
