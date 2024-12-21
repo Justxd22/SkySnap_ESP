@@ -24,19 +24,25 @@ AsyncResult aResult_no_callback;
 void printError(int code, const String &msg);
 
 
-const int LDR = 33;
-const int BUZZ = 19;
-const int THS = 23;
-const int FAN = 34;
-const int LCD_SDA = 27;
-const int LCD_SCL = 26;
 
-const int LEDPINS[] = {12,13};
+const int LEDPINS[]  = {12,13};
+const int BUZZ       = 19;
+const int THS        = 23;
+const int LCD_SCL    = 14;
+const int LCD_SDA    = 27;
+const int LDR        = 33;
+const int FAN        = 34;
+const int IR_DETECT0 = 32;
+const int IR_DETECT1 = 35;
+const int IR_DETECT2 = 36;
+const int IR_DETECT3 = 39;
+const int SWITCH     = 25;
+
 const int nLEDS = sizeof(LEDPINS) / sizeof(LEDPINS[0]);
-
 float maxTemp = 0;
 float minTemp = 0;
 unsigned long lastUpdate = 0;
+String DIR = "";
 
 
 unsigned long previousDHTMillis = 0;
@@ -48,7 +54,7 @@ const char* ssid = "XD";
 const char* pass = "12312345";
 
 bool wifiConnected = false;
-
+bool PowerdON = true;
 
 DHT dht(THS, DHT11);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -89,6 +95,7 @@ void connectToWiFi() {
 
 
 void buzz() {
+  if (!PowerdON) return;
 digitalWrite(BUZZ, HIGH);
 delay(100);
 digitalWrite(BUZZ, LOW);
@@ -104,6 +111,7 @@ delay(500);
 }
 
 void BUZZZ() {
+  if (!PowerdON) return;
   // short Info Buzz
   digitalWrite(BUZZ, HIGH);
   delay(100);
@@ -111,6 +119,7 @@ void BUZZZ() {
 }
 
 void BUZZZZ() {
+  if (!PowerdON) return;
   // long Error Buzz
   digitalWrite(BUZZ, HIGH);
   delay(400);
@@ -167,28 +176,23 @@ void DHT_Mon() {
 
 void LDR_mon() {
   int ldrValue = analogRead(LDR);
-  live.sun = map(ldrValue, 0, 4095, 0, 100);
+  live.sun = map(ldrValue, 4095, 0, 0, 100);
   if (ldrValue == 0){
     return;
   }
-  Serial.print("Light Intensity: ");
-  Serial.println(ldrValue);
+  // Serial.print("Light Intensity: ");
+  // Serial.println(ldrValue);
   
 //   if (ldrValue < 100) {
 //     buzz();
 //   }
 }
 void FAN_mon() {
-  int WinSpeed = analogRead(FAN);
+  int Voltage = analogRead(FAN) * (3.3 / 4095);
+  int windSpeed = (((Voltage - 0.4) / 1.6) * 32.4) * 2.237;
 
-if (WinSpeed == 0 || (WinSpeed > 19.0 && WinSpeed < 29.9)) {
-    return;
-}
 // sensorVoltage = adc0 * (3.3 / 4095.0); // Divide the controller working voltage by the analog input resolution;
-// WindSpeed = (((sensorVoltage - 0.4) / 1.6) * 32.4) * 2.237;
-  float voltage = WinSpeed * 5.0 / 1023.0;
 
-  float windSpeed = (voltage) / 0.1;
 
   if (windSpeed < 0){
     windSpeed = 0;
@@ -198,6 +202,47 @@ if (WinSpeed == 0 || (WinSpeed > 19.0 && WinSpeed < 29.9)) {
   Serial.print("Wind Speed: ");
   Serial.println(windSpeed);
 
+}
+
+void DEG_mon() {
+  if (!PowerdON) return;
+  const float ir0 = analogRead(IR_DETECT0) * (3.3 / 4095);
+  const float ir1 = analogRead(IR_DETECT1) * (3.3 / 4095);
+  const float ir2 = analogRead(IR_DETECT2) * (3.3 / 4095);
+  const float ir3 = analogRead(IR_DETECT3) * (3.3 / 4095);
+  const int livDEG = live.deg;
+
+  if (ir0 > 0.20 && ir0 < 0.58){
+    live.deg = 0;
+    DIR = "East";
+  }
+  else if (ir1 > 0.20 && ir1 < 0.58){
+    live.deg = 270;
+    DIR = "South";
+  }
+  else if (ir2 > 0.20 && ir2 < 0.58){
+    live.deg = 90;
+    DIR = "North";
+  }
+  else if (ir3 > 0.20 && ir3 < 0.58){
+    live.deg = 180;
+    DIR = "West";
+  }
+  if (livDEG != live.deg){
+    BUZZZ();
+    for (int x=0; x< nLEDS; x++){
+        digitalWrite(LEDPINS[x], HIGH);
+        delay(200);
+        digitalWrite(LEDPINS[x], LOW);
+    }
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("DEG:");
+    lcd.print(live.deg);
+    lcd.setCursor(0, 1);
+    lcd.print(DIR);
+    delay(1500);
+  }
 }
 
 
@@ -283,8 +328,13 @@ void setup() {
   pinMode(LDR, INPUT);
   pinMode(FAN, INPUT);
   pinMode(THS, INPUT);
+  pinMode(SWITCH, INPUT);
   pinMode(12, OUTPUT);
   pinMode(13, OUTPUT);
+  pinMode(IR_DETECT0, INPUT);
+  pinMode(IR_DETECT1, INPUT);
+  pinMode(IR_DETECT2, INPUT);
+  pinMode(IR_DETECT3, INPUT);
   
   Serial.begin(115200);
   Serial.println("Serial initialized. Pin set to HIGH.");
@@ -302,7 +352,7 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("TO THE MOON & BACK");
 
-
+  BUZZZ();
   connectToWiFi();
   while (WiFi.status() != WL_CONNECTED) {
     for (int x=0; x< nLEDS; x++){
@@ -330,15 +380,25 @@ const unsigned long DISPLAY_INTERVAL = 2000;
 int displayState = 0;
 
 void loop() {
+  if (digitalRead(SWITCH) == HIGH && PowerdON == true){
+    PowerdON = false;
+    lcd.noBacklight();
+    lcd.noDisplay();
+    return;
+  }
+  else if (digitalRead(SWITCH) == LOW && PowerdON == false){
+    PowerdON = true;
+    lcd.backlight();
+    lcd.display();
+    BUZZZZ();
+  }
+
   unsigned long currentMillis = millis();
   
   if (currentMillis - previousDHTMillis >= DHT_INTERVAL) {
     DHT_Mon();
     previousDHTMillis = currentMillis;
     live.dt = millis();
-  }
-  if (currentMillis % 1000 == 100) {
-      syncLiveData();
   }
   
   if (currentMillis - previousLDRMillis >= LDR_INTERVAL) {
@@ -365,11 +425,17 @@ void loop() {
 
   }
 
+  if (currentMillis % 1000 == 100) {
+      syncLiveData();
+  }
+
   authHandler();
 
   Database.loop();
+  DEG_mon();
 
   if (currentMillis - previousDisplayMillis >= DISPLAY_INTERVAL) {
+    if (!PowerdON) return;
     previousDisplayMillis = currentMillis;
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -395,7 +461,13 @@ void loop() {
         lcd.print(live.sun);
         lcd.print(" %");
         break;
+      case 4:
+        lcd.print("Deg: ");
+        lcd.print(live.deg);
+        lcd.print(" ");
+        lcd.print(DIR);
+        break;
     }
-    displayState = (displayState + 1) % 4;
+    displayState = (displayState + 1) % 5;
   }
 }
